@@ -10,6 +10,9 @@ spring:
         jwt:
           issuer-uri: http://localhost:8090/realms/tpi-realm
   cloud:
+    # Disable Spring Cloud compatibility check when Spring Boot and Spring Cloud versions don't match exactly
+    compatibility-verifier:
+      enabled: false
     gateway:
       routes:
         - id: solicitudes-route

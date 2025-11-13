@@ -10,8 +10,9 @@ import java.util.List;
 
 @Repository
 public interface TramoRepository extends JpaRepository<Tramo, Long> {
-    List<Tramo> findBySolicitud_Id(Long solicitudId); // legacy
-    Page<Tramo> findBySolicitud_Id(Long solicitudId, Pageable pageable);
+    // Solicitud primary key is 'nroSolicitud' -> use property path 'solicitud.nroSolicitud'
+    List<Tramo> findBySolicitudNroSolicitud(Long solicitudId); // legacy
+    Page<Tramo> findBySolicitudNroSolicitud(Long solicitudId, Pageable pageable);
 
     Page<Tramo> findByEstado(String estado, Pageable pageable);
     Page<Tramo> findByDominioCamion(String dominioCamion, Pageable pageable);

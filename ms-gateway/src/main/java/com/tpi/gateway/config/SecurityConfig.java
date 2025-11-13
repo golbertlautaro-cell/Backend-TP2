@@ -33,14 +33,39 @@ public class SecurityConfig {
      */
     @Bean
     public ReactiveJwtAuthenticationConverter jwtAuthenticationConverter() {
-        JwtGrantedAuthoritiesConverter grantedAuthoritiesConverter = new JwtGrantedAuthoritiesConverter();
-        grantedAuthoritiesConverter.setAuthoritiesClaimName("realm_access.roles");
-        grantedAuthoritiesConverter.setAuthorityPrefix("ROLE_");
-
+        // Custom converter: Keycloak places realm roles under claim `realm_access.roles` (nested map).
+        // JwtGrantedAuthoritiesConverter does not support nested claim paths, so we provide a custom converter
+        // that extracts the list and maps them to SimpleGrantedAuthority with prefix ROLE_.
         ReactiveJwtAuthenticationConverter jwtAuthenticationConverter = new ReactiveJwtAuthenticationConverter();
-        jwtAuthenticationConverter.setJwtGrantedAuthoritiesConverter(
-            new ReactiveJwtGrantedAuthoritiesConverterAdapter(grantedAuthoritiesConverter)
-        );
+
+        jwtAuthenticationConverter.setJwtGrantedAuthoritiesConverter(jwt -> {
+            java.util.Collection<org.springframework.security.core.GrantedAuthority> authorities = new java.util.ArrayList<>();
+
+            Object realmAccess = jwt.getClaims().get("realm_access");
+            if (realmAccess instanceof java.util.Map) {
+                Object rolesObj = ((java.util.Map<?, ?>) realmAccess).get("roles");
+                if (rolesObj instanceof java.util.Collection) {
+                    for (Object r : (java.util.Collection<?>) rolesObj) {
+                        if (r != null) {
+                            String role = r.toString();
+                            authorities.add(new org.springframework.security.core.authority.SimpleGrantedAuthority("ROLE_" + role));
+                        }
+                    }
+                }
+            }
+
+            // Also include scope/as authorities if present (optional)
+            Object scopeObj = jwt.getClaims().get("scope");
+            if (scopeObj instanceof String) {
+                String[] scopes = scopeObj.toString().split(" ");
+                for (String s : scopes) {
+                    authorities.add(new org.springframework.security.core.authority.SimpleGrantedAuthority(s));
+                }
+            }
+
+            return reactor.core.publisher.Flux.fromIterable(authorities);
+        });
+
         return jwtAuthenticationConverter;
     }
 }

@@ -2,6 +2,7 @@ package com.tpi.logistica.config;
 
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.http.HttpMethod;
 import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
@@ -26,8 +27,11 @@ public class SecurityConfig {
                     "/ping",
                     "/v3/api-docs/**",
                     "/swagger-ui/**",
-                    "/swagger-ui.html"
+                    "/swagger-ui.html",
+                    "/api/distancia"
                 ).permitAll()
+                // Permitir GET en /api/camiones/** sin autenticación (leer camiones)
+                .requestMatchers(HttpMethod.GET, "/api/camiones/**").permitAll()
                 // Todos los endpoints /api/** requieren autenticación
                 .requestMatchers("/api/**").authenticated()
                 .anyRequest().permitAll()

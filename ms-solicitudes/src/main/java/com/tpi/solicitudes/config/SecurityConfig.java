@@ -2,6 +2,7 @@ package com.tpi.solicitudes.config;
 
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.http.HttpMethod;
 import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
@@ -28,6 +29,13 @@ public class SecurityConfig {
                     "/swagger-ui/**",
                     "/swagger-ui.html"
                 ).permitAll()
+                // Permitir GET en /api/clientes/{id} sin autenticación (leer clientes)
+                .requestMatchers(HttpMethod.GET, "/api/clientes/**").permitAll()
+                // Permitir GET en /api/solicitudes/{id} sin autenticación (leer solicitudes)
+                .requestMatchers(HttpMethod.GET, "/api/solicitudes/**").permitAll()
+                // Permitir GET en /api/tramos y paths relacionados sin autenticación (leer tramos)
+                .requestMatchers(HttpMethod.GET, "/api/tramos/**").permitAll()
+                .requestMatchers(HttpMethod.GET, "/solicitudes/**").permitAll()
                 // Todos los endpoints /api/** requieren autenticación
                 .requestMatchers("/api/**").authenticated()
                 .anyRequest().permitAll()

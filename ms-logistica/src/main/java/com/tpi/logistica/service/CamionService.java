@@ -2,6 +2,7 @@ package com.tpi.logistica.service;
 
 import com.tpi.logistica.domain.Camion;
 import com.tpi.logistica.repository.CamionRepository;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
@@ -12,6 +13,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.NoSuchElementException;
 
+@Slf4j
 @Service
 public class CamionService {
 

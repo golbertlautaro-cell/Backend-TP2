@@ -3,7 +3,9 @@ package com.tpi.solicitudes.service;
 import com.tpi.solicitudes.domain.EstadoTramo;
 import com.tpi.solicitudes.domain.Solicitud;
 import com.tpi.solicitudes.domain.Tramo;
+import com.tpi.solicitudes.dto.DistanciaDTO;
 import com.tpi.solicitudes.repository.SolicitudRepository;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import com.tpi.solicitudes.repository.TramoRepository;
@@ -18,6 +20,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.NoSuchElementException;
 
+@Slf4j
 @Service
 public class TramoService {
 
@@ -25,23 +28,30 @@ public class TramoService {
     private final SolicitudRepository solicitudRepository;
     private final LogisticaClient logisticaClient;
     private final GoogleMapsClient googleMapsClient;
+    private final GoogleMapsService googleMapsService;
 
     public TramoService(TramoRepository tramoRepository,
                         SolicitudRepository solicitudRepository,
                         LogisticaClient logisticaClient,
-                        GoogleMapsClient googleMapsClient) {
+                        GoogleMapsClient googleMapsClient,
+                        GoogleMapsService googleMapsService) {
         this.tramoRepository = tramoRepository;
         this.solicitudRepository = solicitudRepository;
         this.logisticaClient = logisticaClient;
         this.googleMapsClient = googleMapsClient;
+        this.googleMapsService = googleMapsService;
+    }
+
+    public Page<Tramo> findAll(Pageable pageable) {
+        return tramoRepository.findAll(pageable);
     }
 
     public List<Tramo> listarPorSolicitud(Long solicitudId) { // legacy
-        return tramoRepository.findBySolicitud_Id(solicitudId);
+        return tramoRepository.findBySolicitudNroSolicitud(solicitudId);
     }
 
     public Page<Tramo> listarPorSolicitud(Long solicitudId, Pageable pageable) {
-        return tramoRepository.findBySolicitud_Id(solicitudId, pageable);
+        return tramoRepository.findBySolicitudNroSolicitud(solicitudId, pageable);
     }
 
     public Page<Tramo> listar(Pageable pageable, String estado, String dominioCamion,
@@ -183,5 +193,109 @@ public class TramoService {
                                         .subscribeOn(Schedulers.boundedElastic());
                             });
                 });
+    }
+
+    /**
+     * Calcula costo y tiempo estimado usando la nueva integración con Google Maps Service.
+     * Este método es más directo y sincrónico que calcularCostoYTiempoEstimado.
+     * 
+     * @param idTramo ID del tramo a actualizar
+     * @param origen Dirección o coordenadas de origen (ej: "Buenos Aires")
+     * @param destino Dirección o coordenadas de destino (ej: "Córdoba")
+     * @return Mono con el Tramo actualizado con costos y tiempos estimados
+     */
+    public Mono<Tramo> calcularCostoYTiempoEstimadoConGoogleMaps(Long idTramo,
+                                                                 String origen,
+                                                                 String destino) {
+        return Mono.fromCallable(() -> obtener(idTramo))
+                .subscribeOn(Schedulers.boundedElastic())
+                .flatMap(tramo -> {
+                    if (tramo.getDominioCamion() == null || tramo.getDominioCamion().isBlank()) {
+                        return Mono.error(new IllegalStateException("El tramo no tiene camión asignado"));
+                    }
+                    
+                    String dominio = tramo.getDominioCamion();
+                    
+                    try {
+                        // Paso 1: Obtener distancia y duración desde Google Maps
+                        DistanciaDTO distancia = googleMapsService.calcularDistancia(origen, destino);
+                        log.info("Distancia obtenida: {} km, Duración: {}", distancia.getKilometros(), distancia.getDuracionTexto());
+                        
+                        // Paso 2: Obtener datos del camión (costoBaseKm)
+                        return logisticaClient.obtenerCamion(dominio)
+                                .flatMap(camion -> {
+                                    Object costoBaseKmObj = camion != null ? camion.get("costoBaseKm") : null;
+                                    if (!(costoBaseKmObj instanceof Number)) {
+                                        return Mono.error(new IllegalStateException("costoBaseKm no disponible para camión: " + dominio));
+                                    }
+                                    
+                                    // Paso 3: Calcular costo estimado
+                                    double costoBaseKm = ((Number) costoBaseKmObj).doubleValue();
+                                    double costoEstimado = distancia.getKilometros() * costoBaseKm;
+                                    tramo.setCostoAproximado(costoEstimado);
+                                    
+                                    // Paso 4: Actualizar tiempos estimados
+                                    if (tramo.getFechaHoraInicioEstimada() == null) {
+                                        tramo.setFechaHoraInicioEstimada(LocalDateTime.now());
+                                    }
+                                    
+                                    // Extraer minutos de duracionTexto (ej: "7 hours 15 mins" o "30 mins")
+                                    long duracionMinutos = extraerMinutosDeDuracion(distancia.getDuracionTexto());
+                                    tramo.setFechaHoraFinEstimada(tramo.getFechaHoraInicioEstimada().plusMinutes(duracionMinutos));
+                                    
+                                    // Paso 5: Guardar en base de datos
+                                    log.info("Tramo actualizado - Costo: ${}, Duración: {} minutos", costoEstimado, duracionMinutos);
+                                    return Mono.fromCallable(() -> tramoRepository.save(tramo))
+                                            .subscribeOn(Schedulers.boundedElastic());
+                                });
+                        
+                    } catch (RuntimeException e) {
+                        log.error("Error al calcular distancia y costo para tramo {}: {}", idTramo, e.getMessage(), e);
+                        return Mono.error(e);
+                    }
+                });
+    }
+
+    /**
+     * Extrae la cantidad de minutos de una cadena de duración de Google Maps.
+     * Ejemplos:
+     * - "7 hours 15 mins" → 435 minutos
+     * - "30 mins" → 30 minutos
+     * - "2 hours" → 120 minutos
+     * 
+     * @param duracionTexto Texto de duración desde Google Maps
+     * @return Cantidad de minutos
+     */
+    private long extraerMinutosDeDuracion(String duracionTexto) {
+        if (duracionTexto == null || duracionTexto.isEmpty()) {
+            log.warn("Duración en texto vacía, retornando 0");
+            return 0L;
+        }
+        
+        long totalMinutos = 0;
+        String[] partes = duracionTexto.split(" ");
+        
+        for (int i = 0; i < partes.length; i++) {
+            try {
+                if (i + 1 < partes.length) {
+                    String numero = partes[i];
+                    String unidad = partes[i + 1];
+                    
+                    long valor = Long.parseLong(numero);
+                    
+                    if (unidad.startsWith("hour")) {
+                        totalMinutos += valor * 60;
+                        i++; // Saltar la unidad
+                    } else if (unidad.startsWith("min")) {
+                        totalMinutos += valor;
+                        i++; // Saltar la unidad
+                    }
+                }
+            } catch (NumberFormatException e) {
+                log.warn("No se pudo parsear duración en: {}", duracionTexto);
+            }
+        }
+        
+        return totalMinutos;
     }
 }
